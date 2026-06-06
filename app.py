@@ -4,22 +4,31 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 
-
-st.set_page_config(page_title="Kayfa | Employee Retention", layout="wide")
-
-
-st.markdown("""
-<style>
-    .stApp {
-        background: linear-gradient(140deg, #0F172A 0%, #1E1B4B 50%, #0F172A 100%);
-    }
-</style>
-""", unsafe_allow_html=True)
+# ==========================================
+# PAGE CONFIGURATION
+# ==========================================
+st.set_page_config(page_title="Kayfa | Talent Leak Dashboard", layout="wide", initial_sidebar_state="expanded")
 
 
+try:
+    st.logo("Kayfa.svg")
+except:
+    pass
+
+@st.cache_data
 def load_data():
-    df = pd.read_csv('cleaned_employee_attrition.csv')
-    
+    try:
+        df = pd.read_csv('cleaned_employee_attrition.csv')
+    except FileNotFoundError:
+        df = pd.read_csv('employee_attrition_combined.csv')
+        
+    if set(df['attrition'].unique()).issubset({0, 1}) or df['attrition'].dtype in [np.int64, np.float64]:
+        df['Attrition Status'] = df['attrition'].map({0: 'Stayed', 1: 'Left'})
+        df['left_numeric'] = df['attrition']
+    else:
+        df['Attrition Status'] = df['attrition']
+        df['left_numeric'] = (df['attrition'] == 'Left').astype(int)
+
     ordinal_categories = {
         'work_life_balance': ['Poor', 'Fair', 'Good', 'Excellent'],
         'job_satisfaction': ['Low', 'Medium', 'High', 'Very High'],
@@ -29,215 +38,234 @@ def load_data():
         if col in df.columns:
             df[col] = pd.Categorical(df[col], categories=order, ordered=True)
             
-    df['age_group'] = pd.cut(df['age'], bins=[17, 25, 35, 45, 55, 100], labels=['18-25', '26-35', '36-45', '46-55', '56+'])
-    df['commute_distance'] = pd.qcut(df['distance_from_home'], 3, labels=['Short Commute', 'Medium Commute', 'Long Commute'])
-    df['years_per_promotion'] = df['years_at_company'] / (df['number_of_promotions'] + 1)
-    df['loyalty_bucket'] = pd.qcut(df['years_per_promotion'], 3, labels=['Fast Track', 'Average Speed', 'Stagnant'])
-    df['income_tier'] = pd.qcut(df['monthly_income'], 3, labels=['Lower Tier', 'Middle Tier', 'Upper Tier'])
-    df['has_dependents_label'] = np.where(df['number_of_dependents'] > 0, 'Has Dependents', 'No Dependents')
-    df['work_setting'] = df['remote_work'].map({0: 'In-Office', 1: 'Remote'})
-    df['overtime_status'] = df['overtime'].map({0: 'Standard Hours', 1: 'Works Overtime'})
+    df['Remote Work Status'] = df['remote_work'].replace({0: 'In-Office', 1: 'Remote', 'No': 'In-Office', 'Yes': 'Remote'})
+    df['Overtime Status'] = df['overtime'].replace({0: 'No Overtime', 1: 'Overtime', 'No': 'No Overtime', 'Yes': 'Overtime'})
     
+    df['Tenure Stage'] = pd.cut(df['years_at_company'], bins=[-1, 1, 4, 9, 15, 100], 
+                                labels=['0-1 yrs (New)', '2-4 yrs (Early)', '5-9 yrs (Mid)', '10-15 yrs (Senior)', '15+ yrs (Veteran)'])
     return df
 
 df = load_data()
+company_avg_attrition = df['left_numeric'].mean()
+brand_color = '#3B82F6' 
 
 
-col_logo, col_title = st.columns([1, 4])
-with col_logo:
-    try:
-        st.image("Kayfa.svg", use_container_width=True)
-    except FileNotFoundError:
-        st.markdown("<h2 style='color: #3B82F6; margin:0;'>Kayfa - كيف</h2>", unsafe_allow_html=True)
-with col_title:
-    st.markdown("<h1 style='margin: 0;'>Employee Retention Dashboard</h1>", unsafe_allow_html=True)
-    st.caption("A data-driven view into organizational health, turnover drivers, and operational bottlenecks.")
+def render_page_header(title, subtitle=None):
+    col_text, col_logo = st.columns([5, 1])
+    with col_text:
+        st.title(title)
+        if subtitle:
+            st.caption(subtitle)
+    with col_logo:
+        try:
+            st.image("Kayfa.svg", width=120)
+        except:
+            st.markdown("<h3 style='color: #3B82F6; text-align: right; margin-top: 15px;'>Kayfa</h3>", unsafe_allow_html=True)
+    st.write("") 
 
-st.write("") 
-
-with st.container(border=True):
-    st.markdown("**Filter the Dashboard**")
-    f_col1, f_col2 = st.columns(2)
-    with f_col1:
-        selected_roles = st.multiselect("Select Departments:", options=df['job_role'].unique(), default=df['job_role'].unique())
-    with f_col2:
-        selected_levels = st.multiselect("Select Seniority Levels:", options=df['job_level'].unique(), default=list(df['job_level'].unique()))
-
-filtered_df = df[(df['job_role'].isin(selected_roles)) & (df['job_level'].isin(selected_levels))]
-st.write("")
+def add_average_line(fig, avg_val, name="Company Average"):
+    fig.add_trace(go.Scatter(x=[None], y=[None], mode="lines", line=dict(color="red", dash="dash"), name=name))
+    fig.add_hline(y=avg_val, line_dash="dash", line_color="red")
+    return fig
 
 
-total_emp = len(filtered_df)
-left_df = filtered_df[filtered_df['attrition'] == 1]
-stayed_df = filtered_df[filtered_df['attrition'] == 0]
-attrition_rate = (len(left_df) / total_emp) * 100 if total_emp > 0 else 0
+def page_overview():
+    render_page_header("Company Overview & Main Leaks", "A clear view of our turnover problem and where we are losing the most staff.")
+    
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Total Employees", f"{len(df):,}")
+    m2.metric("Overall Turnover Rate", f"{company_avg_attrition * 100:.1f}%")
+    m3.metric("Total Exits", f"{df['left_numeric'].sum():,}")
+    m4.metric("Remote Staff", f"{(df['Remote Work Status'] == 'Remote').mean() * 100:.1f}%")
+    
+    st.divider()
+    
+    st.markdown("### Q1: Department Breakdown")
+    role_stats = df.groupby('job_role')['left_numeric'].agg(['count', 'sum', 'mean']).reset_index()
+    role_stats.columns = ['Department', 'Total', 'Exits', 'Turnover Rate']
+    role_stats['Turnover %'] = role_stats['Turnover Rate'] * 100
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        fig1 = px.bar(role_stats.sort_values('Turnover %', ascending=False), x='Department', y='Turnover %', 
+                      text_auto='.1f', color_discrete_sequence=[brand_color])
+        fig1 = add_average_line(fig1, company_avg_attrition * 100)
+        fig1.update_layout(title="<b>Turnover Rate by Department</b>", yaxis_title="Turnover Rate (%)")
+        st.plotly_chart(fig1, use_container_width=True, theme="streamlit")
+    with col2:
+        fig2 = px.bar(role_stats.sort_values('Exits', ascending=False), x='Department', y='Exits', 
+                      text_auto=True, color_discrete_sequence=['#94A3B8'])
+        fig2.update_layout(title="<b>Total Exits (Headcount)</b>", yaxis_title="Number of People")
+        st.plotly_chart(fig2, use_container_width=True, theme="streamlit")
 
-st.markdown("### Quick Stats")
-
-m1, m2, m3, m4, m5, m6 = st.columns(6)
-with m1.container(border=True):
-    st.metric("Total Employees", f"{total_emp:,}")
-with m2.container(border=True):
-    st.metric("Turnover Rate", f"{attrition_rate:.1f}%")
-with m3.container(border=True):
-    st.metric("Avg Pay (All Staff)", f"${filtered_df['monthly_income'].mean():,.0f}")
-with m4.container(border=True):
-    st.metric("Avg Age (All Staff)", f"{filtered_df['age'].mean():.1f}")
-with m5.container(border=True):
-    st.metric("Avg Years at Company", f"{filtered_df['years_at_company'].mean():.1f} yrs")
-with m6.container(border=True):
-    st.metric("Total Promotions Given", f"{filtered_df['number_of_promotions'].sum():,}")
-
-st.write("")
+    st.info("**Insight:** Education is completely broken (49% quit rate). Technology is draining our budget because replacing 9,000+ specialized workers is highly expensive.")
+    st.error("**Action:** Replace the management in the Education department. For Tech, give immediate retention bonuses to top performers to stop the bleeding.")
 
 
+def page_demographics():
+    render_page_header("Who is Leaving?")
+    
+    st.markdown("### Q7: Life Stage Risk Profiles")
+    df['Life Stage Profile'] = np.where((df['age'] < 30) & (df['marital_status'] == 'Single') & (df['number_of_dependents'] == 0), 
+                                'Under 30, Single, No Kids', 'All Other Demographics')
+    life_stats = df.groupby('Life Stage Profile')['left_numeric'].mean().reset_index()
+    life_stats['Turnover %'] = life_stats['left_numeric'] * 100
+    
+    fig3 = px.bar(life_stats, x='Life Stage Profile', y='Turnover %', text_auto='.1f', 
+                  color_discrete_sequence=[brand_color]) 
+    fig3 = add_average_line(fig3, company_avg_attrition * 100)
+    fig3.update_layout(title="<b>The Young & Single Flight Risk</b>", yaxis_title="Turnover Rate (%)")
+    st.plotly_chart(fig3, use_container_width=True, theme="streamlit")
 
-tab1, tab2, tab3, tab4 = st.tabs([
-    "Demographics & Departments", 
-    "Work Environment Analysis", 
-    "Career & Satisfaction", 
-    "High-Risk Profiles"
+    st.info("**Insight:** Young, single employees without kids quit at a massive 73.3% rate. They have no family ties to our benefits plan, so they chase better offers fast.")
+    st.error("**Action:** Stop selling them family benefits. Give this group fast-track promotions, constant training, and clear paths to leadership. Move them up or they will move out.")
+
+
+def page_environment():
+    render_page_header("Burnout & Flexibility")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("### Q2: The Cost of Overtime")
+        ot_stats = df.groupby('Overtime Status')['left_numeric'].mean().reset_index()
+        ot_stats['Turnover %'] = ot_stats['left_numeric'] * 100
+        fig_ot = px.bar(ot_stats, x='Overtime Status', y='Turnover %', text_auto='.1f', color_discrete_sequence=[brand_color])
+        fig_ot.update_layout(title="<b>Turnover: Standard vs. Overtime Hours</b>", yaxis_title="Turnover Rate (%)")
+        st.plotly_chart(fig_ot, use_container_width=True, theme="streamlit")
+        
+        st.info("**Insight:** Overtime increases quitting by 6%. But even without it, normal hours still have a bad 45.5% turnover rate.")
+        st.error("**Action:** Ban excessive overtime today. But do not stop there—fix base pay and team culture, because working regular hours is not keeping people here.")
+
+    with col2:
+        st.markdown("### Q3: Remote Work")
+        rw_stats = df.groupby('Remote Work Status')['left_numeric'].mean().reset_index()
+        rw_stats['Turnover %'] = rw_stats['left_numeric'] * 100
+        fig_rw = px.bar(rw_stats, x='Remote Work Status', y='Turnover %', text_auto='.1f', color_discrete_sequence=[brand_color])
+        fig_rw.update_layout(title="<b>Turnover: In-Office vs. Remote</b>", yaxis_title="Turnover Rate (%)")
+        st.plotly_chart(fig_rw, use_container_width=True, theme="streamlit")
+        
+        st.info("**Insight:** Remote work cuts turnover in half (24% vs 52%). But right now, only 19% of our staff are allowed to do it.")
+        st.error("**Action:** Make remote work a standard company policy. Give every eligible employee at least two work-from-home days a week starting next month.")
+
+    st.divider()
+
+    st.markdown("### Q6: Passion vs. Burnout")
+    wlb_sat = df.groupby(['job_satisfaction', 'work_life_balance'], observed=True)['left_numeric'].mean().unstack() * 100
+    fig_heat = px.imshow(wlb_sat, text_auto=".1f", color_continuous_scale='Blues', aspect="auto",
+                         labels=dict(x="Work-Life Balance", y="Job Satisfaction", color="Turnover %"))
+    fig_heat.update_layout(title="<b>Turnover by Satisfaction & Work-Life Balance</b>")
+    st.plotly_chart(fig_heat, use_container_width=True, theme="streamlit")
+
+    st.info("**Insight:** Employees who love their jobs but have terrible work-life balance quit at the exact same rate (65%) as people who hate their jobs.")
+    st.error("**Action:** Force your top performers to log off. Do not let managers overwork people just because the employee is passionate.")
+
+
+
+def page_career():
+    render_page_header("Money & Career Growth")
+
+    st.markdown("### Q5: The 5-Year Wall")
+    tenure_stats = df.groupby('Tenure Stage', observed=True)['left_numeric'].mean().reset_index()
+    tenure_stats['Turnover %'] = tenure_stats['left_numeric'] * 100
+    fig_time = px.line(tenure_stats, x='Tenure Stage', y='Turnover %', markers=True)
+    fig_time.update_traces(line=dict(color=brand_color, width=4), marker=dict(size=10))
+    fig_time = add_average_line(fig_time, company_avg_attrition * 100)
+    fig_time.update_layout(title="<b>Turnover by Years at Company</b>", yaxis_title="Turnover Rate (%)")
+    st.plotly_chart(fig_time, use_container_width=True, theme="streamlit")
+
+    st.info("**Insight:** People do not just quit in year one. Turnover peaks when staff hit the 5-to-9 year mark. They feel stuck and leave.")
+    st.error("**Action:** Sit down with every employee hitting their 5th year. Map out their next promotion before they take their knowledge to a competitor.")
+    
+    st.divider()
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("### Q4: Pay Fairness")
+        df['Pay Tier (Entry)'] = df[df['job_level'] == 'Entry'].groupby('job_level', observed=True)['monthly_income'].transform(
+            lambda x: pd.qcut(x, q=4, labels=['Bottom 25%', 'Q2', 'Q3', 'Top 25%'], duplicates='drop'))
+        pay_stats = df[df['job_level'] == 'Entry'].groupby('Pay Tier (Entry)', observed=True)['left_numeric'].mean().reset_index()
+        pay_stats['Turnover %'] = pay_stats['left_numeric'] * 100
+        
+        fig_pay = px.bar(pay_stats, x='Pay Tier (Entry)', y='Turnover %', text_auto='.1f', color_discrete_sequence=[brand_color])
+        fig_pay.update_layout(title="<b>Turnover by Pay Tier (Entry Level Only)</b>", yaxis_title="Turnover Rate (%)")
+        st.plotly_chart(fig_pay, use_container_width=True, theme="streamlit")
+        
+        st.info("**Insight:** Maxing out an employee's pay bracket does not stop them from leaving. Entry-level staff quit at 62% even when paid top dollar.")
+        st.error("**Action:** Stop giving tiny 2% raises to save people. Promote them to the next job level or fire their bad manager.")
+
+    with col2:
+        st.markdown("### Q8: Career Stagnation")
+        df['Career Mobility'] = np.where(df['number_of_promotions'] == 0, '0 Promotions (Stuck)', '1+ Promotions (Moving Up)')
+        stag_stats = df.groupby('Career Mobility')['left_numeric'].mean().reset_index()
+        stag_stats['Turnover %'] = stag_stats['left_numeric'] * 100
+        
+        fig_stag = px.bar(stag_stats, x='Career Mobility', y='Turnover %', text_auto='.1f', color_discrete_sequence=[brand_color])
+        fig_stag.update_layout(title="<b>Stuck vs. Moving Up</b>", yaxis_title="Turnover Rate (%)")
+        st.plotly_chart(fig_stag, use_container_width=True, theme="streamlit")
+        
+        st.info("**Insight:** Stuck employees quit at 50%. But people getting promoted still quit at 45%. A new title is not a magic fix.")
+        st.error("**Action:** Protect the workload of newly promoted staff. If you give them a new title but work them to death, they will leave anyway.")
+
+
+def page_strategy():
+    render_page_header("Final Strategy & Action Plan")
+    
+    st.markdown("### Q9: The Danger Zone")
+    worst_case = df[(df['Remote Work Status'] == 'In-Office') & 
+                    (df['work_life_balance'] == 'Poor') & 
+                    (df['marital_status'] == 'Single') & 
+                    (df['Overtime Status'] == 'Overtime')]
+    
+    worst_case_rate = worst_case['left_numeric'].mean() * 100 if len(worst_case) > 0 else 0
+    
+    with st.container(border=True):
+        st.markdown("<h3 style='color: #EF4444;'>The Guaranteed Exit Profile</h3>", unsafe_allow_html=True)
+        st.markdown("**Single + In-Office + Overtime + Poor Work-Life Balance**")
+        
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Turnover Rate for this Group", f"{worst_case_rate:.1f}%")
+        m2.metric("Company Average", f"{company_avg_attrition * 100:.1f}%")
+        m3.metric("Employees At Risk Right Now", f"{len(worst_case):,}")
+        
+    st.info("**Insight:** We have nearly 1,000 people who fit this exact profile. They are quitting at a massive 87% rate.")
+    st.error("**Action:** Freeze overtime for these 979 people today. If you do not adjust their workload, 850 of them will quit by December.")
+
+    st.divider()
+
+    st.markdown("### Q10: What Moves the Needle Most?")
+    st.markdown("If we can only fix *one* thing next quarter, where do we get the highest return on investment?")
+    
+    drivers = ['Remote Work Status', 'work_life_balance', 'job_satisfaction']
+    impact_data = []
+    for d in drivers:
+        rates = df.groupby(d, observed=True)['left_numeric'].mean()
+        spread = (rates.max() - rates.min()) * 100
+        impact_data.append({'Driver': d.replace('_', ' ').title(), 'Impact Spread (%)': spread})
+        
+    impact_df = pd.DataFrame(impact_data).sort_values('Impact Spread (%)', ascending=False)
+    
+    fig = px.bar(impact_df, x='Impact Spread (%)', y='Driver', orientation='h', 
+                 text_auto='.1f', color_discrete_sequence=[brand_color])
+    fig.update_layout(title="<b>The Biggest Drivers of Retention (Max vs Min Turnover Rates)</b>", 
+                      xaxis_title="Difference in Turnover Rate (%)", yaxis_title="Factor")
+    st.plotly_chart(fig, use_container_width=True, theme="streamlit")
+
+    st.info("**Insight:** Flexibility stops turnover better than job satisfaction. Where and how much people work matters most.")
+    st.error("**Action:** Launch a 3-day work-from-home policy for all office workers next week. It costs nothing and will save over 1,500 employees from quitting this year.")
+
+    st.divider()
+
+
+    st.markdown("### A Final Word: Implementation & Next Steps")
+    st.warning("**Disclaimer:** The data exposes clear, deep-rooted problems within our work environment. However, do not execute all these recommendations at once. Roll them out one by one. After each action, we must gather fresh data to measure the exact impact, validate our findings, and adjust our strategy before moving to the next phase.")
+
+
+pg = st.navigation([
+    st.Page(page_overview, title="Overview & Main Leaks"),
+    st.Page(page_demographics, title="Who is Leaving?"),
+    st.Page(page_environment, title="Burnout & Flexibility"),
+    st.Page(page_career, title="Money & Career Growth"),
+    st.Page(page_strategy, title="Final Strategy Plan")
 ])
 
-plotly_layout = dict(
-    paper_bgcolor='rgba(0,0,0,0)', 
-    plot_bgcolor='rgba(0,0,0,0)',
-    font=dict(color="#F8FAFC"),
-    margin=dict(t=50, b=30, l=40, r=20)
-)
-
-
-
-with tab1:
-    st.markdown("**Overview:** Identify which specific demographics and departments are experiencing the highest exit rates.")
-    
-    col_a, col_b = st.columns(2)
-    with col_a:
-        # FIX: Removed the confusing promotion multiplier. Just raw, honest numbers now.
-        profile_stats = pd.DataFrame({
-            'Attribute': ['Age', 'Commute Distance (miles)', 'Years at Company'],
-            'Stayed': [stayed_df['age'].mean(), stayed_df['distance_from_home'].mean(), stayed_df['years_at_company'].mean()],
-            'Left': [left_df['age'].mean(), left_df['distance_from_home'].mean(), left_df['years_at_company'].mean()]
-        })
-        fig_profile = go.Figure(data=[
-            go.Bar(name='Stayed', x=profile_stats['Attribute'], y=profile_stats['Stayed'], marker_color='#2563EB'),
-            go.Bar(name='Left', x=profile_stats['Attribute'], y=profile_stats['Left'], marker_color='#F43F5E')
-        ])
-        fig_profile.update_layout(**plotly_layout, barmode='group', title="<b>Average Traits: Employees Who Stayed vs. Left</b>")
-        st.plotly_chart(fig_profile, use_container_width=True)
-        
-    with col_b:
-        dept_att = filtered_df.groupby('job_role', observed=True)['attrition'].mean().reset_index().sort_values('attrition')
-        dept_att['Turnover Rate (%)'] = dept_att['attrition'] * 100
-        fig_dept = px.bar(dept_att, x='Turnover Rate (%)', y='job_role', orientation='h', color='Turnover Rate (%)', color_continuous_scale='Blues', labels={'job_role': 'Department'})
-        fig_dept.update_layout(**plotly_layout, title="<b>Turnover by Department</b>", coloraxis_showscale=False, yaxis_title="")
-        st.plotly_chart(fig_dept, use_container_width=True)
-
-    col_c, col_d = st.columns(2)
-    with col_c:
-        age_att = filtered_df.groupby('age_group', observed=True)['attrition'].mean().reset_index()
-        age_att['Turnover Rate (%)'] = age_att['attrition'] * 100
-        fig_age = px.bar(age_att, x='age_group', y='Turnover Rate (%)', color='Turnover Rate (%)', color_continuous_scale='PuBu', labels={'age_group': 'Age Bracket'})
-        fig_age.update_layout(**plotly_layout, title="<b>Turnover by Age Group</b>", coloraxis_showscale=False)
-        st.plotly_chart(fig_age, use_container_width=True)
-        
-    with col_d:
-        edu_att = filtered_df.groupby('education_level', observed=True)['attrition'].mean().reset_index()
-        edu_att['Turnover Rate (%)'] = edu_att['attrition'] * 100
-        fig_edu = px.bar(edu_att, x='Turnover Rate (%)', y='education_level', orientation='h', color='Turnover Rate (%)', color_continuous_scale='OrRd', labels={'education_level': 'Education Level'})
-        fig_edu.update_layout(**plotly_layout, title="<b>Turnover by Education Level</b>", coloraxis_showscale=False, yaxis_title="")
-        st.plotly_chart(fig_edu, use_container_width=True)
-
-
-
-with tab2:
-    st.markdown("**Work Environment:** Measuring how the physical and temporal work environment impacts retention.")
-    
-    c1, c2 = st.columns(2)
-    with c1:
-        wlb_fam = filtered_df.groupby(['has_dependents_label', 'work_life_balance'], observed=True)['attrition'].mean().reset_index()
-        wlb_fam['Turnover Rate (%)'] = wlb_fam['attrition'] * 100
-        fig_wlb = px.line(wlb_fam, x='work_life_balance', y='Turnover Rate (%)', color='has_dependents_label', markers=True, color_discrete_map={'Has Dependents': '#10B981', 'No Dependents': '#3B82F6'}, labels={'work_life_balance': 'Work-Life Balance Rating', 'has_dependents_label': 'Family Status'})
-        fig_wlb.update_traces(line=dict(width=4), marker=dict(size=10))
-        fig_wlb.update_layout(**plotly_layout, title="<b>The Work-Life Balance Impact</b><br><sup>Single employees quit even faster when personal time is compromised.</sup>", legend_title="")
-        st.plotly_chart(fig_wlb, use_container_width=True)
-        
-    with c2:
-        remote_commute = filtered_df.groupby(['work_setting', 'commute_distance'], observed=True)['attrition'].mean().reset_index()
-        remote_commute['Turnover Rate (%)'] = remote_commute['attrition'] * 100
-        fig_remote = px.bar(remote_commute, x='commute_distance', y='Turnover Rate (%)', color='work_setting', barmode='group', color_discrete_map={'In-Office': '#4F46E5', 'Remote': '#06B6D4'}, labels={'commute_distance': 'Commute Type', 'work_setting': 'Work Setting'})
-        fig_remote.update_layout(**plotly_layout, title="<b>The Remote Work Shield</b><br><sup>Working remotely significantly drops turnover regardless of commute length.</sup>", legend_title="")
-        st.plotly_chart(fig_remote, use_container_width=True)
-    
-    overtime_income = filtered_df.groupby(['income_tier', 'overtime_status'], observed=True)['attrition'].mean().unstack() * 100
-    fig_heat = px.imshow(overtime_income, color_continuous_scale='PuBuGn', text_auto=".1f", aspect="auto", labels=dict(x="Overtime Schedule", y="Compensation Bracket", color="Turnover %"))
-    fig_heat.update_layout(**plotly_layout, title="<b>Paycheck vs. Extra Hours</b><br><sup>High salaries do NOT stop employees from quitting if they are forced to work overtime.</sup>")
-    st.plotly_chart(fig_heat, use_container_width=True)
-
-
-with tab3:
-    st.markdown("**Career Velocity:** How promotions, seniority, and internal satisfaction affect loyalty.")
-    
-    c3, c4 = st.columns(2)
-    with c3:
-        lvl_att = filtered_df.groupby('job_level', observed=True)['attrition'].mean().reset_index()
-        lvl_att['Turnover Rate (%)'] = lvl_att['attrition'] * 100
-        fig_lvl = px.bar(lvl_att, x='job_level', y='Turnover Rate (%)', color='Turnover Rate (%)', color_continuous_scale='Teal', labels={'job_level': 'Seniority Level'})
-        fig_lvl.update_layout(**plotly_layout, title="<b>Turnover by Seniority Level</b><br><sup>Entry-level employees quit at a massive 63% rate.</sup>", coloraxis_showscale=False)
-        st.plotly_chart(fig_lvl, use_container_width=True)
-        
-    with c4:
-        promo_att = filtered_df.groupby('loyalty_bucket', observed=True)['attrition'].mean().reset_index()
-        promo_att['Turnover Rate (%)'] = promo_att['attrition'] * 100
-        fig_promo = px.bar(promo_att, x='loyalty_bucket', y='Turnover Rate (%)', color='Turnover Rate (%)', color_continuous_scale='emrld', labels={'loyalty_bucket': 'Promotion Speed'})
-        fig_promo.update_layout(**plotly_layout, title="<b>The Promotion Trap (Poaching Risk)</b>", coloraxis_showscale=False)
-        st.plotly_chart(fig_promo, use_container_width=True)
-
-    c5, c6 = st.columns(2)
-    with c5:
-        sat_att = filtered_df.groupby('job_satisfaction', observed=True)['attrition'].mean().reset_index()
-        sat_att['Turnover Rate (%)'] = sat_att['attrition'] * 100
-        fig_sat = px.bar(sat_att, x='job_satisfaction', y='Turnover Rate (%)', color='Turnover Rate (%)', color_continuous_scale='Purples', labels={'job_satisfaction': 'Self-Reported Job Satisfaction'})
-        fig_sat.update_layout(**plotly_layout, title="<b>The Satisfaction Paradox</b><br><sup>Highly satisfied employees leave just as fast as miserable ones.</sup>", coloraxis_showscale=False)
-        st.plotly_chart(fig_sat, use_container_width=True)
-
-    with c6:
-        sample_df = filtered_df.sample(n=min(1000, len(filtered_df)), random_state=42)
-        sample_df['Status'] = sample_df['attrition'].map({0: 'Stayed', 1: 'Left'})
-        fig_scatter = px.scatter(sample_df, x='years_at_company', y='monthly_income', color='Status', opacity=0.7, color_discrete_sequence=['#3B82F6', '#EF4444'], labels={'years_at_company': 'Years at Company', 'monthly_income': 'Monthly Pay'})
-        fig_scatter.update_layout(**plotly_layout, title="<b>Income vs. Years at Company</b><br><sup>Visualizing where the exits happen over time.</sup>", legend_title="")
-        st.plotly_chart(fig_scatter, use_container_width=True)
-
-
-with tab4:
-    st.markdown("### Most Vulnerable Employee Groups")
-    st.markdown("These specific combinations of factors act as structural traps, pushing employees out the door at elevated rates.")
-    st.write("")
-    
-    p1, p2 = st.columns(2)
-    
-    worst_case = filtered_df[(filtered_df['job_level'] == 'Entry') & (filtered_df['remote_work'] == 0) & (filtered_df['work_life_balance'] == 'Poor')]
-    worst_case_rate = (worst_case['attrition'].mean() * 100) if len(worst_case) > 0 else 0
-    
-    with p1.container(border=True):
-        st.markdown("<h4 style='color: #F43F5E; margin-top:0;'>The Burnout Trap</h4>", unsafe_allow_html=True)
-        st.markdown("**Who they are:** Entry-Level + Required in Office + Poor Work-Life Balance")
-        st.markdown("This combination of zero flexibility and demanding junior schedules drives attrition to staggering heights.")
-        
-        st.write("")
-        col_m1, col_m2 = st.columns(2)
-        col_m1.metric("Turnover Risk Level", f"{worst_case_rate:.1f}%")
-        col_m2.metric("Total Employees Affected", f"{len(worst_case):,}")
-        
-    high_value_risk = filtered_df[(filtered_df['performance_rating'] == 'High') & (filtered_df['income_tier'] == 'Lower Tier') & (filtered_df['loyalty_bucket'] == 'Stagnant')]
-    high_value_rate = (high_value_risk['attrition'].mean() * 100) if len(high_value_risk) > 0 else 0
-    
-    with p2.container(border=True):
-        st.markdown("<h4 style='color: #FBBF24; margin-top:0;'>The Under-Rewarded Stars</h4>", unsafe_allow_html=True)
-        st.markdown("**Who they are:** High Performers + Lower Pay Bracket + No Recent Promotions")
-        st.markdown("These are top-tier workers producing great results, but they are being ignored for promotions and paid less than their peers.")
-        
-        st.write("")
-        col_m3, col_m4 = st.columns(2)
-        col_m3.metric("Turnover Risk Level", f"{high_value_rate:.1f}%")
-        col_m4.metric("Total Employees Affected", f"{len(high_value_risk):,}")
+pg.run()
