@@ -4,9 +4,7 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 
-# ==========================================
-# PAGE CONFIGURATION
-# ==========================================
+
 st.set_page_config(page_title="Kayfa | Talent Leak Dashboard", layout="wide", initial_sidebar_state="expanded")
 
 
@@ -145,7 +143,7 @@ def page_environment():
         st.plotly_chart(fig_rw, use_container_width=True, theme="streamlit")
         
         st.info("**Insight:** Remote work cuts turnover in half (24% vs 52%). But right now, only 19% of our staff are allowed to do it.")
-        st.error("**Action:** Make remote work a standard company policy. Give every eligible employee at least two work-from-home days a week starting next month.")
+        st.error("**Action:** Make hybrid work a standard company policy for just a month. Give every eligible employee at least two work-from-home days a week starting next month.")
 
     st.divider()
 
@@ -173,8 +171,8 @@ def page_career():
     fig_time.update_layout(title="<b>Turnover by Years at Company</b>", yaxis_title="Turnover Rate (%)")
     st.plotly_chart(fig_time, use_container_width=True, theme="streamlit")
 
-    st.info("**Insight:** People do not just quit in year one. Turnover peaks when staff hit the 5-to-9 year mark. They feel stuck and leave.")
-    st.error("**Action:** Sit down with every employee hitting their 5th year. Map out their next promotion before they take their knowledge to a competitor.")
+    st.info("**Insight:** Employee turnover is highest during the first 6–8 years. Many employees are still exploring opportunities, building their careers, and moving between roles or companies.")
+    st.error("**Action:** Run short anonymous surveys to understand why employees leave and identify issues before they lead to turnover.")
     
     st.divider()
 
